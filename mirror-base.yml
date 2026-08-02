@@ -65,7 +65,7 @@ bin_scan: off
 #
 # ─── The musl legs need `libstdc++` — measured, not assumed ─────────────────
 #
-# bun's musl build links the C++ runtime as well as musl: DT_NEEDED lists
+# opencode's musl build links the C++ runtime as well as musl: DT_NEEDED lists
 # libstdc++.so.6 and libgcc_s.so.1, and bare Alpine ships neither. Re-measured
 # 2026-08-02 on v1.18.11, BOTH arches (arm64 via qemu-aarch64 binfmt):
 #
