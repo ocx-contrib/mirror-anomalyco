@@ -40,9 +40,10 @@ source:
 # covers the other, and both Linux flavours carry an explicit libc feature.
 #
 # The musl builds ALSO need libstdc++.so.6 / libgcc_s.so.1, which bare Alpine
-# does not ship and `os.features` cannot express. Both musl keys are therefore
-# DECLARED HERE but HELD BROKEN by an open-ended exclude in ../mirror-base.yml
-# — read the block over its `platforms:` before changing either key.
+# does not ship, no spec hook can install, and no musl-classified image
+# supplies — so neither musl key is declared and only the glibc pair is
+# mirrored. Full evidence and the re-enable condition: the block over
+# `platforms:` in ../mirror-base.yml. Read it before adding a musl key here.
 #
 # ─── Asset naming — the traps ───────────────────────────────────────────────
 #
@@ -51,29 +52,20 @@ source:
 #
 #   1. `-baseline` — pre-AVX2 CPU variants, x64 only (there is no arm64
 #      counterpart). `^opencode-linux-x64\.tar\.gz$` does not match
-#      `opencode-linux-x64-baseline.tar.gz`, and the musl pattern likewise
-#      rejects `-baseline-musl`. Deliberately not mirrored: an unanchored
-#      pattern would make every x64 key an ambiguous 2-match.
-#   2. `-musl` — the split this spec exists to make. An unanchored glibc
-#      pattern would swallow it.
+#      `opencode-linux-x64-baseline.tar.gz`. Deliberately not mirrored: an
+#      unanchored pattern would make every x64 key an ambiguous 2-match.
+#   2. `-musl` — the flavour this mirror does not carry (see the libc gate
+#      above). An unanchored glibc pattern would swallow it, silently
+#      publishing a musl binary under a `+libc.glibc` key.
 #   3. `opencode-desktop-*` — the Electron GUI installers (.deb/.rpm/.AppImage/
 #      .dmg/.exe/.blockmap). Not a CLI and not mirrored.
 #
 # Resolution verified BOTH ways across EVERY in-range release (all 33 of
-# v1.17.0 … v1.18.11): each of the seven patterns matches EXACTLY one asset,
-# on the oldest and the newest alike. A pattern matching zero is silently
-# skipped, not an error — it would yield a green run with a missing platform.
-# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
-# opencode's musl builds are dynamically linked and additionally need
-# libstdc++.so.6 (and libgcc_s.so.1), which bare Alpine does not ship. The
-# container spec has no setup hook — `containers[]` accepts only `image` and
-# `shell` — and the renderer infers libc purely from the image basename
-# (`infer_libc_from_image` treats only `alpine*` as musl), so a libstdc++-bearing
-# image is rejected as glibc while bare `alpine:3.20` cannot load the artifact.
-# The container matrix exists so a libc claim is PROVEN, not asserted; with no
-# provable leg the honest outcome is to publish glibc only. Add the musl keys
-# once ocx-mirror gains `containers[].libc` (its own source comment anticipates
-# exactly that) or a package-install hook.
+# v1.17.0 … v1.18.11): each of the five patterns matches EXACTLY one asset, on
+# the oldest and the newest alike. (The two musl patterns were verified to the
+# same standard before the flavour was dropped.) A pattern matching zero is
+# silently skipped, not an error — it would yield a green run with a missing
+# platform.
 assets:
   "linux/amd64+libc.glibc":
     - "^opencode-linux-x64\\.tar\\.gz$"

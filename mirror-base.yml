@@ -59,13 +59,13 @@ bin_scan: off
 #   - opencode-linux-{x64,arm64}-musl.tar.gz  → /lib/ld-musl-*    → +libc.musl
 #
 # Container legs follow from what each key CLAIMS, and are the only mechanism
-# that turns a claim into evidence:
-#   - `+libc.glibc` → ubuntu + fedora, NO alpine. The glibc build cannot load
-#     under musl, so an alpine leg would red on a correct artifact.
-#   - `+libc.musl`  → an Alpine-based image only. Same reasoning mirrored.
+# that turns a claim into evidence: `+libc.glibc` → ubuntu + fedora, NO alpine.
+# The glibc build cannot load under musl, so an alpine leg would red on a
+# correct artifact.
 #
-# ⚠️ THE MUSL KEYS ARE DECLARED BUT HELD BROKEN. They are not droppable and
-# they are not currently shippable — read this before touching either one.
+# ⚠️ ONLY THE GLIBC KEYS ARE DECLARED. The musl builds exist upstream and are
+# DELIBERATELY NOT MIRRORED — from `assets:` as well as from here. The full
+# measurement, so nobody re-derives it:
 #
 #   bun's musl build is dynamically linked against the C++ runtime as well as
 #   musl — DT_NEEDED lists libstdc++.so.6 AND libgcc_s.so.1 — and neither ships
@@ -87,41 +87,26 @@ bin_scan: off
 #
 #   The obvious workaround — a musl image that already carries the C++ runtime,
 #   e.g. `node:22-alpine3.20` (verified: `opencode --version` → 1.18.11) — is
-#   REJECTED at spec load, because the image→libc classifier keys on the image
-#   REPOSITORY being literally `alpine`:
+#   REJECTED at spec load. `infer_libc_from_image` keys on the image basename
+#   and treats only `alpine*` as musl:
 #
 #     platforms: 'linux/amd64+libc.musl': container image 'node:22-alpine3.20'
 #     is libc.glibc, but the platform declares libc.musl — the leg would run
 #     without testing the libc claim
 #
 #   (`alpine/k8s:…` is rejected the same way; only `alpine:<tag>` classifies as
-#   musl.) That leaves no image that both classifies musl AND can execute the
-#   artifact.
+#   musl.) So no image both classifies musl AND can execute the artifact.
 #
-#   Treatment: keep both musl keys in `assets:` and here — the libc split is
-#   real and the artifacts exist — and hold them with an open-ended
-#   `severity: broken` exclude. The slice is declared, documented, emits a 🔒
-#   row every run so it is never mistaken for a silent omission, never
-#   builds/tests/pushes, and never reds the run. Reverse it by deleting the two
-#   `exclude` blocks the day `ocx_mirror` grows a container setup hook (then
-#   `alpine:3.20` + `apk add libstdc++` works as-is). Dropping the keys instead
-#   would be wrong twice over: it would publish the glibc build under a bare
-#   key that falsely claims musl hosts, and it would erase a real upstream
-#   artifact from the record.
+#   The container matrix exists so a libc claim is PROVEN, not asserted. With
+#   no provable leg the honest outcome is to publish glibc only — a declared
+#   `+libc.musl` key with no working leg would ship an unverified claim, and a
+#   BARE key would be worse still (it would advertise the glibc build to musl
+#   hosts it cannot load on). Re-add both musl keys — assets, platforms, and an
+#   `alpine:3.20` leg — once ocx-mirror gains `containers[].libc` (its own
+#   source comment anticipates exactly that) or a package-install hook.
 #
-#   Consumers on musl today: install the glibc build under gcompat, or
-#   `apk add libstdc++` and fetch upstream's musl tarball directly.
-# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
-# opencode's musl builds are dynamically linked and additionally need
-# libstdc++.so.6 (and libgcc_s.so.1), which bare Alpine does not ship. The
-# container spec has no setup hook — `containers[]` accepts only `image` and
-# `shell` — and the renderer infers libc purely from the image basename
-# (`infer_libc_from_image` treats only `alpine*` as musl), so a libstdc++-bearing
-# image is rejected as glibc while bare `alpine:3.20` cannot load the artifact.
-# The container matrix exists so a libc claim is PROVEN, not asserted; with no
-# provable leg the honest outcome is to publish glibc only. Add the musl keys
-# once ocx-mirror gains `containers[].libc` (its own source comment anticipates
-# exactly that) or a package-install hook.
+#   Consumers on musl today: `apk add libstdc++` and fetch upstream's musl
+#   tarball directly, or run the glibc build under gcompat.
 platforms:
   "linux/amd64+libc.glibc":
     runner: ubuntu-latest
