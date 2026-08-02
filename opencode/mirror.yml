@@ -67,6 +67,9 @@ source:
 # silently skipped, not an error — it would yield a green run with a missing
 # platform.
 assets:
+  # No `+libc.musl` keys. `opencode-linux-{x64,arm64}-musl.tar.gz` are published
+  # upstream and resolve cleanly, but the flavour cannot be CI-proven — see the
+  # libc gate above and the block over `platforms:` in ../mirror-base.yml.
   "linux/amd64+libc.glibc":
     - "^opencode-linux-x64\\.tar\\.gz$"
   "linux/arm64+libc.glibc":
