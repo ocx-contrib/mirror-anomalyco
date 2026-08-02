@@ -39,11 +39,15 @@ source:
 # NEITHER is static — each names its own loader in PT_INTERP — so neither
 # covers the other, and both Linux flavours carry an explicit libc feature.
 #
+# Re-measured 2026-08-02 on v1.18.11, both arches: unchanged. `dynamically
+# linked` in `file` output, PT_INTERP present — so `+libc.musl` is a REQUIREMENT
+# on the host, not a note about the toolchain, and a bare key would be wrong.
+#
 # The musl builds ALSO need libstdc++.so.6 / libgcc_s.so.1, which bare Alpine
-# does not ship, no spec hook can install, and no musl-classified image
-# supplies — so neither musl key is declared and only the glibc pair is
-# mirrored. Full evidence and the re-enable condition: the block over
-# `platforms:` in ../mirror-base.yml. Read it before adding a musl key here.
+# does not ship. Both musl keys were withheld until `containers[].setup` landed
+# in ocx-mirror 0.5.1; their Alpine legs now install `libstdc++` and prove the
+# claim. Evidence and the reason the base image stays plain `alpine:3.20`: the
+# block over `platforms:` in ../mirror-base.yml.
 #
 # ─── Asset naming — the traps ───────────────────────────────────────────────
 #
@@ -51,29 +55,31 @@ source:
 # keep the wrong ones out:
 #
 #   1. `-baseline` — pre-AVX2 CPU variants, x64 only (there is no arm64
-#      counterpart). `^opencode-linux-x64\.tar\.gz$` does not match
-#      `opencode-linux-x64-baseline.tar.gz`. Deliberately not mirrored: an
-#      unanchored pattern would make every x64 key an ambiguous 2-match.
-#   2. `-musl` — the flavour this mirror does not carry (see the libc gate
-#      above). An unanchored glibc pattern would swallow it, silently
-#      publishing a musl binary under a `+libc.glibc` key.
+#      counterpart), and they exist in BOTH flavours:
+#      `opencode-linux-x64-baseline.tar.gz` AND
+#      `opencode-linux-x64-baseline-musl.tar.gz`. Deliberately not mirrored, so
+#      both x64 patterns must be anchored — unanchored, each would be an
+#      ambiguous 2-match.
+#   2. `-musl` vs plain — the two flavours are distinguished ONLY by that
+#      suffix, so an unanchored glibc pattern swallows the musl asset and
+#      silently publishes a musl binary under a `+libc.glibc` key.
 #   3. `opencode-desktop-*` — the Electron GUI installers (.deb/.rpm/.AppImage/
 #      .dmg/.exe/.blockmap). Not a CLI and not mirrored.
 #
 # Resolution verified BOTH ways across EVERY in-range release (all 33 of
-# v1.17.0 … v1.18.11): each of the five patterns matches EXACTLY one asset, on
-# the oldest and the newest alike. (The two musl patterns were verified to the
-# same standard before the flavour was dropped.) A pattern matching zero is
-# silently skipped, not an error — it would yield a green run with a missing
-# platform.
+# v1.17.0 … v1.18.11, re-run 2026-08-02 with the musl pair added): each of the
+# seven patterns matches EXACTLY one asset, on the oldest and the newest alike.
+# A pattern matching zero is silently skipped, not an error — it would yield a
+# green run with a missing platform.
 assets:
-  # No `+libc.musl` keys. `opencode-linux-{x64,arm64}-musl.tar.gz` are published
-  # upstream and resolve cleanly, but the flavour cannot be CI-proven — see the
-  # libc gate above and the block over `platforms:` in ../mirror-base.yml.
   "linux/amd64+libc.glibc":
     - "^opencode-linux-x64\\.tar\\.gz$"
   "linux/arm64+libc.glibc":
     - "^opencode-linux-arm64\\.tar\\.gz$"
+  "linux/amd64+libc.musl":
+    - "^opencode-linux-x64-musl\\.tar\\.gz$"
+  "linux/arm64+libc.musl":
+    - "^opencode-linux-arm64-musl\\.tar\\.gz$"
   # darwin/amd64 (`opencode-darwin-x64.zip`) IS published upstream and is
   # intentionally NOT mirrored — bun binaries SIGILL under Rosetta 2 and no
   # native Intel macOS runner exists to test the slice. Full reasoning over

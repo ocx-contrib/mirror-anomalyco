@@ -59,54 +59,38 @@ bin_scan: off
 #   - opencode-linux-{x64,arm64}-musl.tar.gz  → /lib/ld-musl-*    → +libc.musl
 #
 # Container legs follow from what each key CLAIMS, and are the only mechanism
-# that turns a claim into evidence: `+libc.glibc` → ubuntu + fedora, NO alpine.
-# The glibc build cannot load under musl, so an alpine leg would red on a
-# correct artifact.
+# that turns a claim into evidence: `+libc.glibc` → ubuntu + fedora, NO alpine;
+# `+libc.musl` → alpine, NOTHING ELSE. Neither build can load under the other's
+# libc, so a crossed leg would red on a correct artifact.
 #
-# ⚠️ ONLY THE GLIBC KEYS ARE DECLARED. The musl builds exist upstream and are
-# DELIBERATELY NOT MIRRORED — from `assets:` as well as from here. The full
-# measurement, so nobody re-derives it:
+# ─── The musl legs need `libstdc++` — measured, not assumed ─────────────────
 #
-#   bun's musl build is dynamically linked against the C++ runtime as well as
-#   musl — DT_NEEDED lists libstdc++.so.6 AND libgcc_s.so.1 — and neither ships
-#   in bare Alpine. Measured on v1.18.11 (linux/amd64):
+# bun's musl build links the C++ runtime as well as musl: DT_NEEDED lists
+# libstdc++.so.6 and libgcc_s.so.1, and bare Alpine ships neither. Re-measured
+# 2026-08-02 on v1.18.11, BOTH arches (arm64 via qemu-aarch64 binfmt):
 #
-#     $ docker run alpine:3.20      ./opencode --version
-#     Error loading shared library libstdc++.so.6: No such file or directory
-#     …57 relocation errors…                                        exit 127
-#     $ docker run alpine:3.20 sh -c 'apk add libstdc++ && ./opencode --version'
-#     1.18.11                                                         exit 0
+#   $ docker run alpine:3.20 /pkg/opencode --version
+#   Error loading shared library libstdc++.so.6: No such file or directory
+#   Error loading shared library libgcc_s.so.1: No such file or directory
+#   Error relocating /pkg/opencode: __cxa_guard_acquire: symbol not found  (…)
 #
-#   So the leg needs `apk add libstdc++`, and THE SPEC HAS NO HOOK FOR IT. A
-#   container entry takes `image`, `id` and `shell`; a `setup:`/`packages:`/
-#   `libc:` key VALIDATES (ContainerConfig does not deny unknown fields) and
-#   then renders nothing. The renderer emits one
-#   `docker run --rm <image> ocx package test …` per test with ocx as the
-#   container entrypoint — no shell, no persistent container, nowhere to
-#   install into.
+#   $ docker run alpine:3.20 sh -c 'apk add --no-cache libstdc++ && /pkg/opencode --version'
+#   1.18.11                                                          exit 0
 #
-#   The obvious workaround — a musl image that already carries the C++ runtime,
-#   e.g. `node:22-alpine3.20` (verified: `opencode --version` → 1.18.11) — is
-#   REJECTED at spec load. `infer_libc_from_image` keys on the image basename
-#   and treats only `alpine*` as musl:
+# ONE package covers both NEEDED entries — Alpine's `libstdc++` depends on
+# `libgcc`, so `apk add libstdc++` installs libgcc first (2 packages, 10 MiB).
+# That is the whole provisioning cost, and it is why `setup:` is one line.
 #
-#     platforms: 'linux/amd64+libc.musl': container image 'node:22-alpine3.20'
-#     is libc.glibc, but the platform declares libc.musl — the leg would run
-#     without testing the libc claim
-#
-#   (`alpine/k8s:…` is rejected the same way; only `alpine:<tag>` classifies as
-#   musl.) So no image both classifies musl AND can execute the artifact.
-#
-#   The container matrix exists so a libc claim is PROVEN, not asserted. With
-#   no provable leg the honest outcome is to publish glibc only — a declared
-#   `+libc.musl` key with no working leg would ship an unverified claim, and a
-#   BARE key would be worse still (it would advertise the glibc build to musl
-#   hosts it cannot load on). Re-add both musl keys — assets, platforms, and an
-#   `alpine:3.20` leg — once ocx-mirror gains `containers[].libc` (its own
-#   source comment anticipates exactly that) or a package-install hook.
-#
-#   Consumers on musl today: `apk add libstdc++` and fetch upstream's musl
-#   tarball directly, or run the glibc build under gcompat.
+# This was withheld until 2026-08-02: a container entry took only
+# `image`/`id`/`shell`, so there was nowhere to install into, and the honest
+# outcome was to publish glibc only rather than assert an unproven claim.
+# ocx-mirror 0.5.1 added `containers[].setup` — commands baked into the leg's
+# image with `docker build` before any test — which makes the claim provable
+# and narrows it honestly: not "runs on stock Alpine", but "runs on Alpine plus
+# libstdc++". Do NOT swap the base for a fat musl image that happens to carry
+# the C++ runtime (e.g. `node:22-alpine3.20`): it is rejected at spec load
+# anyway (only `alpine:<tag>` classifies as musl), and it would hide from the
+# leg exactly what a user must install on their own machine.
 platforms:
   "linux/amd64+libc.glibc":
     runner: ubuntu-latest
@@ -120,6 +104,20 @@ platforms:
     containers:
       - { image: "ubuntu:24.04", shell: bash }
       - { image: "fedora:40",    shell: bash }
+  "linux/amd64+libc.musl":
+    runner: ubuntu-latest
+    containers:
+      - image: "alpine:3.20"
+        shell: sh
+        setup: &musl_setup
+          - apk add --no-cache libstdc++
+  "linux/arm64+libc.musl":
+    # Native arm64 runner, same reason as the glibc arm64 key above.
+    runner: ubuntu-24.04-arm
+    containers:
+      - image: "alpine:3.20"
+        shell: sh
+        setup: *musl_setup
   # darwin/amd64 is deliberately absent, from `assets:` as well as here.
   # opencode is bun-compiled, and bun SIGILLs (exit 132) under Rosetta 2 —
   # proven across the non-baseline build, the -baseline build, AND
