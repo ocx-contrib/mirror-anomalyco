@@ -1,0 +1,161 @@
+# Shared base for every spec in this repository (Anomaly Innovations).
+#
+# NOT a spec: it has no name/target/source and is never loaded on its own.
+# Everything a package owns — name, target, source, assets, asset_type,
+# metadata, catalog, tests, versions, announce, annotations — stays in that
+# package's own mirror.yml.
+#
+# ⚠️ `extends:` is a SHALLOW merge of top-level keys. A spec that sets a key
+# below replaces that block OUTRIGHT — there is no per-key merge. `platforms:`
+# is where this bites: it carries BOTH the runner matrix and the container
+# legs, so a child that restates it to tweak one runner silently drops every
+# `containers:` entry. Nothing reds — the legs simply stop existing, and every
+# os.features claim in that spec goes back to being merely asserted. Restate
+# `platforms:` IN FULL or not at all.
+
+skip_prereleases: true
+cascade: true
+
+# GC-safe: each build keeps its own retained X.Y.Z+<date> tag, so a stray
+# rebuild (ocx-sh/ocx#157) can't orphan a pinned digest. The bare cascade tag
+# still floats. opencode versions as bare semver, so there is no existing
+# +build segment for `date` to collide with.
+build_timestamp: date
+
+verify:
+  github_asset_digest: true
+
+concurrency:
+  # A bun-compiled single-file binary is ~180 MB unpacked (the JS runtime is
+  # embedded), an order of magnitude past a Go/Rust CLI — so bundle and push
+  # concurrency stay low while downloads stay wide.
+  max_downloads: 8
+  max_bundles: 4
+  max_pushes: 2
+  rate_limit_ms: 100
+  max_retries: 3
+  compression_threads: 0
+
+# `off`, and it cannot be otherwise here. The scan only looks BELOW an
+# interface PATH entry of the form ${installPath}/<dir>, and every archive in
+# this repo is a flat single binary at the root (strip_components 0) — the
+# executable IS the content root, so PATH is a bare ${installPath}. `auto` or
+# `verify` is rejected at spec load with exit 65 ("bin_scan is enabled but …
+# declares no interface-visible ${installPath}/<dir> PATH entry"). `off` with a
+# hand-listed `binaries` in metadata.json is the blessed shape. A future
+# package here shipping an archive with a bin/ dir should override to `verify`.
+bin_scan: off
+
+# ─── Platform matrix ────────────────────────────────────────────────────────
+#
+# `os.features` states what an artifact REQUIRES OF THE HOST — it is not a
+# label for how it was built. opencode is a bun-compiled single-file binary and
+# upstream ships a glibc AND a musl Linux build per arch. Measured 2026-08-01
+# on v1.18.11 (evidence above opencode/mirror.yml's `assets:`): NEITHER is
+# static — each names its own loader in PT_INTERP — so neither covers the other
+# and BOTH Linux flavours carry an explicit libc feature:
+#
+#   - opencode-linux-{x64,arm64}.tar.gz       → /lib*/ld-linux-*  → +libc.glibc
+#   - opencode-linux-{x64,arm64}-musl.tar.gz  → /lib/ld-musl-*    → +libc.musl
+#
+# Container legs follow from what each key CLAIMS, and are the only mechanism
+# that turns a claim into evidence:
+#   - `+libc.glibc` → ubuntu + fedora, NO alpine. The glibc build cannot load
+#     under musl, so an alpine leg would red on a correct artifact.
+#   - `+libc.musl`  → an Alpine-based image only. Same reasoning mirrored.
+#
+# ⚠️ THE MUSL KEYS ARE DECLARED BUT HELD BROKEN. They are not droppable and
+# they are not currently shippable — read this before touching either one.
+#
+#   bun's musl build is dynamically linked against the C++ runtime as well as
+#   musl — DT_NEEDED lists libstdc++.so.6 AND libgcc_s.so.1 — and neither ships
+#   in bare Alpine. Measured on v1.18.11 (linux/amd64):
+#
+#     $ docker run alpine:3.20      ./opencode --version
+#     Error loading shared library libstdc++.so.6: No such file or directory
+#     …57 relocation errors…                                        exit 127
+#     $ docker run alpine:3.20 sh -c 'apk add libstdc++ && ./opencode --version'
+#     1.18.11                                                         exit 0
+#
+#   So the leg needs `apk add libstdc++`, and THE SPEC HAS NO HOOK FOR IT. A
+#   container entry takes `image`, `id` and `shell`; a `setup:`/`packages:`/
+#   `libc:` key VALIDATES (ContainerConfig does not deny unknown fields) and
+#   then renders nothing. The renderer emits one
+#   `docker run --rm <image> ocx package test …` per test with ocx as the
+#   container entrypoint — no shell, no persistent container, nowhere to
+#   install into.
+#
+#   The obvious workaround — a musl image that already carries the C++ runtime,
+#   e.g. `node:22-alpine3.20` (verified: `opencode --version` → 1.18.11) — is
+#   REJECTED at spec load, because the image→libc classifier keys on the image
+#   REPOSITORY being literally `alpine`:
+#
+#     platforms: 'linux/amd64+libc.musl': container image 'node:22-alpine3.20'
+#     is libc.glibc, but the platform declares libc.musl — the leg would run
+#     without testing the libc claim
+#
+#   (`alpine/k8s:…` is rejected the same way; only `alpine:<tag>` classifies as
+#   musl.) That leaves no image that both classifies musl AND can execute the
+#   artifact.
+#
+#   Treatment: keep both musl keys in `assets:` and here — the libc split is
+#   real and the artifacts exist — and hold them with an open-ended
+#   `severity: broken` exclude. The slice is declared, documented, emits a 🔒
+#   row every run so it is never mistaken for a silent omission, never
+#   builds/tests/pushes, and never reds the run. Reverse it by deleting the two
+#   `exclude` blocks the day `ocx_mirror` grows a container setup hook (then
+#   `alpine:3.20` + `apk add libstdc++` works as-is). Dropping the keys instead
+#   would be wrong twice over: it would publish the glibc build under a bare
+#   key that falsely claims musl hosts, and it would erase a real upstream
+#   artifact from the record.
+#
+#   Consumers on musl today: install the glibc build under gcompat, or
+#   `apk add libstdc++` and fetch upstream's musl tarball directly.
+# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
+# opencode's musl builds are dynamically linked and additionally need
+# libstdc++.so.6 (and libgcc_s.so.1), which bare Alpine does not ship. The
+# container spec has no setup hook — `containers[]` accepts only `image` and
+# `shell` — and the renderer infers libc purely from the image basename
+# (`infer_libc_from_image` treats only `alpine*` as musl), so a libstdc++-bearing
+# image is rejected as glibc while bare `alpine:3.20` cannot load the artifact.
+# The container matrix exists so a libc claim is PROVEN, not asserted; with no
+# provable leg the honest outcome is to publish glibc only. Add the musl keys
+# once ocx-mirror gains `containers[].libc` (its own source comment anticipates
+# exactly that) or a package-install hook.
+platforms:
+  "linux/amd64+libc.glibc":
+    runner: ubuntu-latest
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  "linux/arm64+libc.glibc":
+    # arm64 container legs run natively — no qemu — so the runner arch must
+    # match the platform or the renderer's guard reds the leg up front.
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  # darwin/amd64 is deliberately absent, from `assets:` as well as here.
+  # opencode is bun-compiled, and bun SIGILLs (exit 132) under Rosetta 2 —
+  # proven across the non-baseline build, the -baseline build, AND
+  # BUN_JSC_useJIT=0, so it is a native-startup illegal instruction, not a
+  # JIT/AVX2 path selectable by asset or env. GitHub retired native Intel macOS
+  # runners, so the slice cannot be CI-validated at all. (A native Go/C binary
+  # like yq DOES pass darwin/amd64 via Rosetta — this is bun-only.) The Intel
+  # build runs fine on real Intel Macs; it just cannot be tested here.
+  darwin/arm64:
+    runner: macos-14
+    shell: bash
+  windows/amd64:
+    runner: windows-latest
+    shell: pwsh
+  windows/arm64:
+    # Native arm64 Windows runner — the amd64 pool cannot execute an ARM64 PE.
+    runner: windows-11-arm
+    shell: pwsh
+  # No `containers:` on darwin or windows — those runners have no Linux
+  # container engine, and the key is rejected at spec load.
+
+notify:
+  discord:
+    webhook_secret: OCX_MIRROR_DISCORD_HOOK

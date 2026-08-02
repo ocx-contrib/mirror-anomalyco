@@ -1,0 +1,132 @@
+extends: ../mirror-base.yml
+
+name: opencode
+
+# Logical index package `anomalyco/opencode` at the physical path
+# `ghcr.io/ocx-contrib/anomalyco/opencode` — slash segments, never
+# hyphen-flattened. The first segment must be this repo's own GitHub owner:
+# GITHUB_TOKEN only authorises packages owned by the repo the workflow runs in.
+#
+# Succeeds the flat `ocx.sh/opencode` coordinate this repository published
+# before the grouped layout.
+target:
+  registry: ghcr.io
+  repository: ocx-contrib/anomalyco/opencode
+
+# Upstream moved from `sst/opencode` to `anomalyco/opencode` — this is the
+# current coordinate. The old path still redirects, but the release feed is
+# read from the new owner directly.
+source:
+  type: github_release
+  owner: anomalyco
+  repo: opencode
+  tag_pattern: "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
+
+# ─── libc gate (Phase 3.5) — the evidence, not the conclusion ───────────────
+#
+# Upstream ships a glibc Linux build and a SEPARATE musl build for both Linux
+# arches. Measured 2026-08-01 on the `opencode` binary from all four v1.18.11
+# tarballs:
+#
+#   -linux-x64.tar.gz          interpreter /lib64/ld-linux-x86-64.so.2
+#                              NEEDED libc.so.6 libpthread.so.0 libdl.so.2 libm.so.6
+#   -linux-arm64.tar.gz        interpreter /lib/ld-linux-aarch64.so.1, same NEEDED set
+#   -linux-x64-musl.tar.gz     interpreter /lib/ld-musl-x86_64.so.1
+#                              NEEDED libc.musl-x86_64.so.1 libstdc++.so.6 libgcc_s.so.1
+#   -linux-arm64-musl.tar.gz   interpreter /lib/ld-musl-aarch64.so.1
+#                              NEEDED libc.musl-aarch64.so.1 libstdc++.so.6 libgcc_s.so.1
+#
+# NEITHER is static — each names its own loader in PT_INTERP — so neither
+# covers the other, and both Linux flavours carry an explicit libc feature.
+#
+# The musl builds ALSO need libstdc++.so.6 / libgcc_s.so.1, which bare Alpine
+# does not ship and `os.features` cannot express. Both musl keys are therefore
+# DECLARED HERE but HELD BROKEN by an open-ended exclude in ../mirror-base.yml
+# — read the block over its `platforms:` before changing either key.
+#
+# ─── Asset naming — the traps ───────────────────────────────────────────────
+#
+# Three families share the `opencode-` prefix and only anchored ^…$ patterns
+# keep the wrong ones out:
+#
+#   1. `-baseline` — pre-AVX2 CPU variants, x64 only (there is no arm64
+#      counterpart). `^opencode-linux-x64\.tar\.gz$` does not match
+#      `opencode-linux-x64-baseline.tar.gz`, and the musl pattern likewise
+#      rejects `-baseline-musl`. Deliberately not mirrored: an unanchored
+#      pattern would make every x64 key an ambiguous 2-match.
+#   2. `-musl` — the split this spec exists to make. An unanchored glibc
+#      pattern would swallow it.
+#   3. `opencode-desktop-*` — the Electron GUI installers (.deb/.rpm/.AppImage/
+#      .dmg/.exe/.blockmap). Not a CLI and not mirrored.
+#
+# Resolution verified BOTH ways across EVERY in-range release (all 33 of
+# v1.17.0 … v1.18.11): each of the seven patterns matches EXACTLY one asset,
+# on the oldest and the newest alike. A pattern matching zero is silently
+# skipped, not an error — it would yield a green run with a missing platform.
+# NOTE (2026-08-02): the `+libc.musl` platforms are DELIBERATELY NOT PUBLISHED.
+# opencode's musl builds are dynamically linked and additionally need
+# libstdc++.so.6 (and libgcc_s.so.1), which bare Alpine does not ship. The
+# container spec has no setup hook — `containers[]` accepts only `image` and
+# `shell` — and the renderer infers libc purely from the image basename
+# (`infer_libc_from_image` treats only `alpine*` as musl), so a libstdc++-bearing
+# image is rejected as glibc while bare `alpine:3.20` cannot load the artifact.
+# The container matrix exists so a libc claim is PROVEN, not asserted; with no
+# provable leg the honest outcome is to publish glibc only. Add the musl keys
+# once ocx-mirror gains `containers[].libc` (its own source comment anticipates
+# exactly that) or a package-install hook.
+assets:
+  "linux/amd64+libc.glibc":
+    - "^opencode-linux-x64\\.tar\\.gz$"
+  "linux/arm64+libc.glibc":
+    - "^opencode-linux-arm64\\.tar\\.gz$"
+  # darwin/amd64 (`opencode-darwin-x64.zip`) IS published upstream and is
+  # intentionally NOT mirrored — bun binaries SIGILL under Rosetta 2 and no
+  # native Intel macOS runner exists to test the slice. Full reasoning over
+  # `platforms:` in ../mirror-base.yml.
+  darwin/arm64:
+    - "^opencode-darwin-arm64\\.zip$"
+  windows/amd64:
+    - "^opencode-windows-x64\\.zip$"
+  windows/arm64:
+    - "^opencode-windows-arm64\\.zip$"
+
+# Linux ships .tar.gz, darwin/windows ship .zip; `type: archive` auto-detects
+# the container. Every archive is a flat single binary at the root (no wrapper
+# dir, no bin/) → strip_components 0 for all → one block, no overrides. That
+# flat layout is also why ../mirror-base.yml pins `bin_scan: off`.
+asset_type:
+  type: archive
+  strip_components: 0
+
+metadata:
+  default: metadata.json
+
+catalog:
+  # Resolves against this spec's own directory, and keeping the logo here puts
+  # it inside this workflow's `opencode/**` path trigger — a repo-root logo.*
+  # sits in no path filter and replacing it would publish nothing.
+  # CATALOG.md is found by the default probe beside this file.
+  logo: logo.svg
+
+versions:
+  min: "1.17.0"
+  new_per_run: 3
+  poll_interval: "0 */6 * * *"   # every 6 hours
+
+tests:
+  # `script:` resolves from the REPOSITORY ROOT — unlike `metadata.default` and
+  # `catalog.logo` above, which resolve against this spec's own directory.
+  - name: smoke
+    script: opencode/tests/smoke.star
+
+annotations:
+  # From the Phase 1.5 license gate:
+  #   $ gh api repos/anomalyco/opencode/license --jq '.license.spdx_id'
+  #   MIT
+  org.opencontainers.image.licenses: "MIT"
+
+announce:
+  # Spelled out, not derived from target.repository — the logical name and the
+  # physical path are related by convention only.
+  package: anomalyco/opencode
+  fork: ocx-contrib/index
