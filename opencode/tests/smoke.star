@@ -9,7 +9,8 @@ expect.ok(r_version)
 expect.matches(r_version.stdout, r"\d+\.\d+\.\d+")
 
 # Tier 3: functional behavior on hermetic input — deterministic, offline.
-# `completion bash` generates a yargs completion script with a stable marker.
-r_comp = ocx.run(OPENCODE, "completion", "bash")
-expect.ok(r_comp)
-expect.contains(r_comp.stdout, "opencode-completions")
+# 2.x dropped `completion`; `--help` works across majors (1.x prints it to
+# stderr, 2.x to stdout) and lists the stable `run` subcommand.
+r_help = ocx.run(OPENCODE, "--help")
+expect.ok(r_help)
+expect.matches(r_help.stdout + r_help.stderr, r"\brun\b")
