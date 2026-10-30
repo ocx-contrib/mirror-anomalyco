@@ -127,7 +127,7 @@ platforms:
   # like yq DOES pass darwin/amd64 via Rosetta — this is bun-only.) The Intel
   # build runs fine on real Intel Macs; it just cannot be tested here.
   darwin/arm64:
-    runner: macos-14
+    runner: macos-15
     shell: bash
   windows/amd64:
     runner: windows-latest
